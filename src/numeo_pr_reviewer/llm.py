@@ -3,7 +3,7 @@ import os
 import re
 import time
 
-from anthropic import Anthropic
+from anthropic import Anthropic, AnthropicError
 from pydantic import ValidationError
 
 from .schema import ReviewResult, RunMetrics
@@ -41,36 +41,42 @@ def review_pr(
     client = Anthropic(api_key=api_key)
     start = time.perf_counter()
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=MAX_TOKENS,
-        temperature=TEMPERATURE,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
+    try:
+        response = client.messages.create(
+            model=model,
+            max_tokens=MAX_TOKENS,
+            temperature=TEMPERATURE,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+    except AnthropicError as e:
+        raise LLMError(f"Anthropic API call failed: {e}") from e
 
     raw = response.content[0].text if response.content else ""
 
     try:
         parsed = ReviewResult.model_validate_json(_extract_json(raw))
     except (LLMError, ValidationError, json.JSONDecodeError) as first_err:
-        retry = client.messages.create(
-            model=model,
-            max_tokens=MAX_TOKENS,
-            temperature=TEMPERATURE,
-            system=system_prompt,
-            messages=[
-                {"role": "user", "content": user_prompt},
-                {"role": "assistant", "content": raw},
-                {
-                    "role": "user",
-                    "content": (
-                        "Your previous response was not valid JSON matching the schema. "
-                        f"Error: {first_err}. Return only the JSON object, no prose, no fences."
-                    ),
-                },
-            ],
-        )
+        try:
+            retry = client.messages.create(
+                model=model,
+                max_tokens=MAX_TOKENS,
+                temperature=TEMPERATURE,
+                system=system_prompt,
+                messages=[
+                    {"role": "user", "content": user_prompt},
+                    {"role": "assistant", "content": raw},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your previous response was not valid JSON matching the schema. "
+                            f"Error: {first_err}. Return only the JSON object, no prose, no fences."
+                        ),
+                    },
+                ],
+            )
+        except AnthropicError as e:
+            raise LLMError(f"Anthropic API retry failed: {e}") from e
         raw = retry.content[0].text if retry.content else ""
         try:
             parsed = ReviewResult.model_validate_json(_extract_json(raw))
