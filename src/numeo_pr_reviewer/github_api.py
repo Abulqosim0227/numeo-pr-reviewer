@@ -89,6 +89,13 @@ class GitHubClient:
             ]
         return self._post(f"/repos/{owner}/{repo}/pulls/{number}/reviews", payload).json()
 
+    def post_issue_comment(
+        self, owner: str, repo: str, number: int, body: str
+    ) -> dict[str, Any]:
+        return self._post(
+            f"/repos/{owner}/{repo}/issues/{number}/comments", {"body": body}
+        ).json()
+
     def request_reviewers(
         self, owner: str, repo: str, number: int, reviewers: list[str]
     ) -> dict[str, Any]:

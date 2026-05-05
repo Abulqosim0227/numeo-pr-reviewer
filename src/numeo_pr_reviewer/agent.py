@@ -83,7 +83,18 @@ def run(pr_url: str, mode: str, dry_run: bool = False, runs_dir: Path = Path("ru
                     gh.post_review(owner, repo, number, event, body, kept)
                     logger.add_action(f"posted review event={event} inline_comments={len(kept)}")
                 except GitHubError as e:
-                    if "422" in str(e) and kept:
+                    err = str(e)
+                    if "own pull request" in err:
+                        folded = _fold_comments_into_body(
+                            f"**Agent decision: {event}** (cannot self-review via API; posting as comment)\n\n"
+                            + body,
+                            kept,
+                        )
+                        gh.post_issue_comment(owner, repo, number, folded)
+                        logger.add_action(
+                            f"posted issue comment (self-PR fallback) event={event} inline={len(kept)}"
+                        )
+                    elif "422" in err and kept:
                         folded = _fold_comments_into_body(body, kept)
                         gh.post_review(owner, repo, number, event, folded, [])
                         logger.add_action(

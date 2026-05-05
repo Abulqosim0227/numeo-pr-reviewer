@@ -8,11 +8,23 @@ Built for the Numeo AI Product Engineering Challenge.
 
 ## Demo
 
-Live demo PR: <DEMO_PR_URL>
+Live demo PR: **https://github.com/Abulqosim0227/numeo-pr-reviewer-demo/pull/1**
 
-That PR was reviewed by the agent in both modes. The two reviews are visible on the
-PR conversation tab. Run logs (full prompt, raw LLM response, tokens, latency) for
-each run are in `runs/` and excerpted at the bottom of this README.
+That PR was reviewed by the agent in both modes. Both reviews are visible on the PR
+conversation tab. Same diff, opposite decisions:
+
+| Mode         | Decision         | Sample of the comment                                              |
+|--------------|------------------|--------------------------------------------------------------------|
+| aggressive   | APPROVE          | "Changes are clean and maintain existing behavior."                |
+| conservative | REQUEST_CHANGES  | "This touches core user business logic..." (escalated to humans)   |
+
+The demo PR is owned by the same GitHub account as the PAT, so GitHub blocks the
+formal review API (you can't review your own PR). The agent detects this and falls
+back to posting an issue comment that contains the same decision and body. See the
+"Self-PR fallback" section below.
+
+Run logs (full prompt, raw LLM response, tokens, latency) live in `runs/` after each
+invocation.
 
 ## Quick start
 
@@ -26,7 +38,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e .
 
 cp .env.example .env
-# edit .env: set GITHUB_TOKEN and ANTHROPIC_API_KEY
+# edit .env: set GITHUB_TOKEN and OPENROUTER_API_KEY (and optionally LLM_MODEL)
 ```
 
 Run a review:
@@ -41,11 +53,12 @@ Run a review:
 
 ## Configuration
 
-| Variable            | Required | Notes                                                    |
-|---------------------|----------|----------------------------------------------------------|
-| `GITHUB_TOKEN`      | yes      | Fine-grained PAT. Scopes: Contents R/W, Pull requests R/W, Issues R/W on the target repo. |
-| `ANTHROPIC_API_KEY` | yes      | Anthropic API key. Used to call Claude.                  |
-| `NUMEO_REVIEWERS`   | no       | Comma-separated GitHub usernames the LLM may assign as reviewers when escalating. Empty = no assignment. |
+| Variable             | Required | Notes                                                    |
+|----------------------|----------|----------------------------------------------------------|
+| `GITHUB_TOKEN`       | yes      | Fine-grained PAT. Scopes: Contents R/W, Pull requests R/W, Issues R/W on the target repo. |
+| `OPENROUTER_API_KEY` | yes      | OpenRouter key. Used to call any model via OpenRouter's OpenAI-compatible API. |
+| `LLM_MODEL`          | no       | OpenRouter model id. Defaults to `deepseek/deepseek-chat`. Examples: `anthropic/claude-sonnet-4.5`, `openai/gpt-4o`. |
+| `NUMEO_REVIEWERS`    | no       | Comma-separated GitHub usernames the LLM may assign as reviewers when escalating. Empty = no assignment. |
 
 ## Modes
 
@@ -79,11 +92,12 @@ list, then executes via the GitHub API.
 
 ### Why one-shot, not iterative
 
-For a 6-hour build, a single high-quality call from a strong reasoning model
-beats an agent loop with weak self-correction. Claude Sonnet 4.6 with the diff
-in context produces better-targeted comments than a chain of cheaper calls.
-If the LLM returns malformed JSON it gets one retry with the error fed back,
-then the run fails loud (no silent default review).
+For a 6-hour build, a single high-quality call from a strong model beats an agent
+loop with weak self-correction. The default model (`deepseek/deepseek-chat`) is
+chosen for its strong code-review ability per dollar; `LLM_MODEL` lets you swap
+to anything OpenRouter exposes (Claude, GPT-4o, Llama, etc.) without code changes.
+If the LLM returns malformed JSON it gets one retry with the error fed back, then
+the run fails loud (no silent default review).
 
 ### Truncation
 
@@ -99,6 +113,17 @@ GitHub rejects inline comments whose `line` does not fall on a line in the diff
 hunk. When this happens the agent retries the review post with `comments=[]` and
 folds the rejected comments into the markdown body so the feedback is not lost.
 
+### Self-PR fallback
+
+GitHub forbids reviewing a PR you authored (any review event — APPROVE,
+REQUEST_CHANGES, COMMENT). When the PAT owner equals the PR author, the formal
+reviews API returns 422 "Cannot approve your own pull request". The agent
+catches this specific error and falls back to a plain issue comment that
+contains the same decision and body. Real PR-review semantics are lost
+(no formal approval status), but the feedback is still posted and the run
+log records `posted issue comment (self-PR fallback)` so the substitution is
+auditable.
+
 ## Observability
 
 Every run writes `runs/<UTC-timestamp>_<owner>_<repo>_pull_<n>.json` containing:
@@ -107,7 +132,7 @@ Every run writes `runs/<UTC-timestamp>_<owner>_<repo>_pull_<n>.json` containing:
 |------------------|--------------------------------------------------------|
 | `timestamp`      | UTC ISO8601                                            |
 | `pr_url`, `mode` | Run inputs                                             |
-| `model`          | Model id used (e.g. `claude-sonnet-4-6`)               |
+| `model`          | Model id used (e.g. `deepseek/deepseek-chat`)          |
 | `system_prompt`  | Full system prompt sent to the LLM                     |
 | `user_prompt`    | Full user prompt: PR metadata + diff + changed files   |
 | `raw_response`   | Raw LLM text before JSON parsing                       |
